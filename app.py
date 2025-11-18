@@ -2,60 +2,73 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import re
 
 
-# ==========================
-# 网页标题
-# ==========================
-st.set_page_config(page_title="CV 三圈自动识别绘图平台", layout="centered")
-
-st.title("🔬 CV 电化学三圈自动识别与绘图平台")
-st.write("上传你的 CSV 数据文件，我将自动识别表头、自动分割三圈并绘图。")
+st.set_page_config(page_title="自动 CV 分析平台", layout="centered")
+st.title("🔬 自动 CV 曲线多圈分析平台")
+st.write("上传 CSV 文件后，将自动解析仪器参数并分割所有扫描圈。")
 
 
-# ==========================
-# 文件上传
-# ==========================
-uploaded_file = st.file_uploader("请上传 CSV 数据文件：", type=["csv"])
+# ============ 文件上传 ============
+uploaded_file = st.file_uploader("请上传 CSV 文件：", type=["csv"])
 
 if uploaded_file:
+    # 读取全部文本行
+    raw_lines = uploaded_file.getvalue().decode("utf-8").splitlines()
 
-    # ==========================
-    # 自动查找表头
-    # ==========================
-    lines = uploaded_file.getvalue().decode("utf-8").splitlines()
+    # ====== 自动提取 CSV 表头参数 ======
+    param_dict = {}
+    param_pattern = re.compile(r"(.+?)\s*[:\t]\s*(.+)")
 
+    for line in raw_lines:
+        m = param_pattern.match(line)
+        if m:
+            key = m.group(1).strip()
+            value = m.group(2).strip()
+            param_dict[key] = value
+
+    # 显示读取的参数
+    st.subheader("📌 自动识别的仪器参数")
+    st.json(param_dict)
+
+    # 解析关键参数（带容错处理）
+    try:
+        init_E = float(param_dict.get("Init E (mV)", 0))
+        high_E = float(param_dict.get("High E (mV)", 0))
+        low_E = float(param_dict.get("Low E (mV)", 0))
+        sample_int = float(param_dict.get("Sample Int (mV)", 5))
+        sweep_segments = int(param_dict.get("Sweep Segments", 2))
+    except:
+        st.error("❌ 参数格式解析失败，请检查文件！")
+        st.stop()
+
+    # 一圈包含两个 segment
+    full_cycles = sweep_segments // 2
+    st.success(f"✔ 自动识别到 **{sweep_segments} 个扫描段** → **{full_cycles} 圈完整扫描**")
+
+    # ====== 查找数据表头行 ======
     header_line = None
-    for i, line in enumerate(lines):
-        if ("Potential" in line and "Current" in line) or ("Potential(V)" in line):
+    for i, line in enumerate(raw_lines):
+        if "Potential" in line and "Current" in line:
             header_line = i
             break
 
     if header_line is None:
-        st.error("❌ 未找到 Potential / Current 表头，请检查文件格式！")
+        st.error("❌ 未找到 Potential / Current 表头！")
         st.stop()
 
-    st.success(f"✔ 表头已自动识别：位于第 {header_line + 1} 行")
-
-    # ==========================
-    # 读取数据
-    # ==========================
+    # ====== 读取数据 ======
     df = pd.read_csv(uploaded_file, skiprows=header_line)
     df.columns = df.columns.str.strip()
 
-    # 匹配列名
     x_col = [c for c in df.columns if "Potential" in c][0]
     y_col = [c for c in df.columns if "Current" in c][0]
-
-    st.write(f"**识别电位列：** `{x_col}`")
-    st.write(f"**识别电流列：** `{y_col}`")
 
     x = df[x_col].dropna().values
     y = df[y_col].dropna().values
 
-    # ==========================
-    # 自动识别方向变化（确定扫描段）
-    # ==========================
+    # ====== 自动识别电压方向变化（切分 segment）======
     dx = np.diff(x)
     direction = np.sign(dx)
     switch_points = np.where(np.diff(direction) != 0)[0] + 1
@@ -67,7 +80,13 @@ if uploaded_file:
         start = p
     segments.append((start, len(x)-1))
 
-    # 合并两段为一整圈
+    st.write(f"自动检测到 {len(segments)} 个电压段（Segment）")
+
+    # ====== 根据 Sweep Segments 精确匹配 ======
+    if len(segments) != sweep_segments:
+        st.warning("⚠ 自动识别的 Segment 数量与 Sweep Segments 不一致，但仍继续匹配。")
+
+    # ====== 合并两个 Segment → 一圈 ======
     cycles = []
     for i in range(0, len(segments), 2):
         if i + 1 < len(segments):
@@ -75,13 +94,10 @@ if uploaded_file:
             _, e2 = segments[i + 1]
             cycles.append((s1, e2))
 
-    st.success(f"✔ 自动识别到 {len(cycles)} 圈完整扫描")
+    st.success(f"✔ 最终识别到 {len(cycles)} 圈")
 
-    # ==========================
-    # 绘制整体图像
-    # ==========================
+    # ====== 绘制整体图像 ======
     st.subheader("📈 全部扫描曲线")
-
     fig_full, ax_full = plt.subplots()
     ax_full.plot(x, y)
     ax_full.set_xlabel("Potential (V)")
@@ -89,11 +105,8 @@ if uploaded_file:
     ax_full.grid(True)
     st.pyplot(fig_full)
 
-    # ==========================
-    # 每一圈独立绘图
-    # ==========================
-    st.subheader("🔄 每一圈扫描曲线")
-
+    # ====== 绘制每一圈 ======
+    st.subheader("🔄 每一圈图像")
     for idx, (s, e) in enumerate(cycles, start=1):
         st.markdown(f"### 第 {idx} 圈")
         fig, ax = plt.subplots()
@@ -102,4 +115,3 @@ if uploaded_file:
         ax.set_ylabel("Current (A)")
         ax.grid(True)
         st.pyplot(fig)
-
