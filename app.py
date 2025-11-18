@@ -8,9 +8,9 @@ from fpdf import FPDF
 import os
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="自动 CV 分析", layout="wide")
-st.title("⚡ 电化学工作站 CV 多圈分析")
-st.caption("2025.11.18")
+st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
+st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
+st.caption("支持：自动解析参数 · 多圈切分 · 峰值分析 · Excel 导出 · PDF 报告 · 多文件对比")
 
 
 # =========================================================
@@ -95,9 +95,8 @@ if not uploaded_files:
     st.stop()
 
 
-# =========================================================
-# 主循环
-# =========================================================
+# 保存每个文件的每圈数据用于多文件叠加
+all_cycles = {}
 
 for uploaded_file in uploaded_files:
 
@@ -121,7 +120,7 @@ for uploaded_file in uploaded_files:
     getF = lambda k, d=0: float(params.get(k, d))
     getI = lambda k, d=0: int(params.get(k, d))
     sweep_segments = getI("Sweep Segments", 2)
-    full_cycles = sweep_segments // 2
+    full_cycles_count = sweep_segments // 2
 
     # ------------------- 找数据表头 -------------------
     header_line = None
@@ -179,6 +178,7 @@ for uploaded_file in uploaded_files:
 
     save_dir = f"{uploaded_file.name}_Cycles"
     os.makedirs(save_dir, exist_ok=True)
+    all_cycles[uploaded_file.name] = {}
 
     for idx, (s, e) in enumerate(cycles, 1):
         st.markdown(f"### 🔸 第 {idx} 圈")
@@ -212,20 +212,58 @@ for uploaded_file in uploaded_files:
 
         excel_output.append(df_cycle)
         cycles_data_list.append((df_cycle, {"ox": ox, "red": rd}))
+        # 保存用于多文件叠加
+        all_cycles[uploaded_file.name][idx] = (xc, yc)
 
     # =========================================================
-    # 下载 Excel
+    # 下载 Excel / PDF（key 唯一）
     # =========================================================
     st.subheader("📥 导出结果")
     excel_buf = BytesIO()
     with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
         for i, dfc in enumerate(excel_output, 1):
             dfc.to_excel(writer, sheet_name=f"Cycle_{i}", index=False)
-    st.download_button("⬇ 下载 Excel", excel_buf.getvalue(), file_name=f"{uploaded_file.name}_Cycles.xlsx")
+    st.download_button(
+        label="⬇ 下载 Excel",
+        data=excel_buf.getvalue(),
+        file_name=f"{uploaded_file.name}_Cycles.xlsx",
+        key=f"{uploaded_file.name}_excel"
+    )
 
-    # =========================================================
-    # 下载 PDF
-    # =========================================================
     pdf_bytes = generate_pdf_report(uploaded_file.name, params, cycles_data_list, full_curve_xy)
-    st.download_button("⬇ 下载 PDF 报告", pdf_bytes, file_name=f"{uploaded_file.name}_Report.pdf")
+    st.download_button(
+        label="⬇ 下载 PDF 报告",
+        data=pdf_bytes,
+        file_name=f"{uploaded_file.name}_Report.pdf",
+        key=f"{uploaded_file.name}_pdf"
+    )
 
+
+# =========================================================
+# 多文件多圈叠加比较
+# =========================================================
+st.divider()
+st.header("📊 多文件多圈叠加比较（可缩放）")
+
+file_names = list(all_cycles.keys())
+selected_files = st.multiselect("选择文件用于叠加：", file_names)
+
+cycle_selection = {}
+for f in selected_files:
+    max_cycle = len(all_cycles[f])
+    cycle_selection[f] = st.number_input(f"{f} 选择圈数", 1, max_cycle, 1, key=f"{f}_cycle_input")
+
+if selected_files:
+    fig_compare = go.Figure()
+    for f in selected_files:
+        c = cycle_selection[f]
+        x_sel, y_sel = all_cycles[f][c]
+        fig_compare.add_trace(go.Scatter(x=x_sel, y=y_sel, mode='lines', name=f"{f} Cycle {c}"))
+    fig_compare.update_layout(
+        title="Multi-file Cycle Comparison",
+        xaxis_title="Potential (V)",
+        yaxis_title="Current (A)",
+        height=600,
+        legend=dict(font=dict(size=14)),
+    )
+    st.plotly_chart(fig_compare, use_container_width=True)
