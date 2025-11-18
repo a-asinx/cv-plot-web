@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from io import BytesIO
 import re
 from fpdf import FPDF
-
+import os
 
 st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
 st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
@@ -176,6 +176,10 @@ for uploaded_file in uploaded_files:
     excel_output = []
     cycle_figs = []  # 用于 PDF
 
+    # 新增：创建文件夹保存每一圈数据与图像
+    save_dir = f"{uploaded_file.name}_Cycles"
+    os.makedirs(save_dir, exist_ok=True)
+
     for idx, (s, e) in enumerate(cycles, 1):
 
         st.markdown(f"### 🔸 第 {idx} 圈")
@@ -187,9 +191,14 @@ for uploaded_file in uploaded_files:
         ax.grid(True)
         ax.set_xlabel("Potential (V)")
         ax.set_ylabel("Current (A)")
+        plt.tight_layout()
         st.pyplot(fig)
 
-        # 保存 PNG
+        # ---- 保存每一圈 PNG 图像 ----
+        png_path = os.path.join(save_dir, f"Cycle_{idx}.png")
+        fig.savefig(png_path)
+
+        # 保存 BytesIO 用于 PDF
         buf = BytesIO()
         fig.savefig(buf, format="png")
         cycle_png = buf.getvalue()
@@ -203,12 +212,12 @@ for uploaded_file in uploaded_files:
         st.write(f"**Oxidation Peak:** {ox}")
         st.write(f"**Reduction Peak:** {rd}")
 
-        excel_output.append(pd.DataFrame({
-            "Cycle": idx,
-            "Potential": xc,
-            "Current": yc
-        }))
+        # ---- 保存每一圈原始数据 CSV ----
+        df_cycle = pd.DataFrame({"Potential": xc, "Current": yc})
+        csv_path = os.path.join(save_dir, f"Cycle_{idx}.csv")
+        df_cycle.to_csv(csv_path, index=False)
 
+        excel_output.append(df_cycle)
         cycle_figs.append((cycle_png, {"ox": ox, "red": rd}))
 
         # 保存用于叠加比较
