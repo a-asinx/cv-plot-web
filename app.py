@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import matplotlib.pyplot as plt
 from io import BytesIO
 import re
 from fpdf import FPDF
@@ -10,7 +9,7 @@ import os
 
 st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
 st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
-st.caption("支持：自动解析参数 · 多圈切分 · 峰值分析 · Excel 导出 · PDF 报告 · 多曲线对比 · 交互缩放")
+st.caption("支持：自动解析参数 · 多圈切分 · 峰值分析 · Excel 导出 · PDF 报告 · 交互缩放")
 
 
 # =========================================================
@@ -86,8 +85,6 @@ if not uploaded_files:
 # 主循环：处理每一个文件
 # =========================================================
 
-all_cycles_for_compare = {}   # 保存用于多曲线叠加
-
 for uploaded_file in uploaded_files:
 
     st.divider()
@@ -147,36 +144,46 @@ for uploaded_file in uploaded_files:
     st.success(f"✔ 共识别到 {len(cycles)} 圈")
 
     # =========================================================
-    # ① 交互式 Plotly 全曲线（可缩放）
+    # ① 交互式 Plotly 全曲线（可缩放、美化）
     # =========================================================
     st.subheader("📈 交互式完整曲线（可缩放）")
 
     fig_plotly = go.Figure()
-    fig_plotly.add_trace(go.Scatter(x=x, y=y, mode='lines', name="Full Curve"))
+    fig_plotly.add_trace(go.Scatter(
+        x=x,
+        y=y,
+        mode='lines',
+        name="Full Curve",
+        line=dict(color='royalblue', width=2)
+    ))
+
     fig_plotly.update_layout(
-        xaxis_title="Potential (V)",
-        yaxis_title="Current (A)",
-        title="Full CV Curve",
-        height=500
+        title=dict(text="Full CV Curve", font=dict(size=24)),
+        xaxis=dict(title="Potential (V)", title_font=dict(size=18),
+                   tickfont=dict(size=14), showgrid=True, gridcolor='lightgrey'),
+        yaxis=dict(title="Current (A)", title_font=dict(size=18),
+                   tickfont=dict(size=14), showgrid=True, gridcolor='lightgrey'),
+        height=600,
+        margin=dict(l=80, r=40, t=80, b=60),
+        legend=dict(font=dict(size=14)),
     )
+
     st.plotly_chart(fig_plotly, use_container_width=True)
 
     # 保存用于 PDF
     buf_full = BytesIO()
-    plt.figure()
-    plt.plot(x, y)
-    plt.savefig(buf_full, format="png")
+    fig_plotly.write_image(buf_full, format="png", width=1200, height=600, scale=2)
     buf_full_png = buf_full.getvalue()
 
     # =========================================================
-    # ② 每一圈分析
+    # ② 每一圈分析（Plotly 替代 Matplotlib）
     # =========================================================
     st.subheader("🔄 每一圈分析")
 
     excel_output = []
     cycle_figs = []  # 用于 PDF
 
-    # 新增：创建文件夹保存每一圈数据与图像
+    # 创建文件夹保存每一圈数据与图像
     save_dir = f"{uploaded_file.name}_Cycles"
     os.makedirs(save_dir, exist_ok=True)
 
@@ -185,23 +192,24 @@ for uploaded_file in uploaded_files:
         st.markdown(f"### 🔸 第 {idx} 圈")
         xc, yc = x[s:e], y[s:e]
 
-        # ---- matplotlib 图 ----
-        fig, ax = plt.subplots()
-        ax.plot(xc, yc)
-        ax.grid(True)
-        ax.set_xlabel("Potential (V)")
-        ax.set_ylabel("Current (A)")
-        plt.tight_layout()
-        st.pyplot(fig)
+        # Plotly 绘制每一圈
+        fig_cycle = go.Figure()
+        fig_cycle.add_trace(go.Scatter(x=xc, y=yc, mode='lines', line=dict(color='firebrick', width=2)))
+        fig_cycle.update_layout(
+            title=dict(text=f"Cycle {idx}", font=dict(size=20)),
+            xaxis=dict(title="Potential (V)", title_font=dict(size=16),
+                       tickfont=dict(size=12), showgrid=True, gridcolor='lightgrey'),
+            yaxis=dict(title="Current (A)", title_font=dict(size=16),
+                       tickfont=dict(size=12), showgrid=True, gridcolor='lightgrey'),
+            height=500,
+            margin=dict(l=80, r=40, t=60, b=50),
+        )
 
-        # ---- 保存每一圈 PNG 图像 ----
+        st.plotly_chart(fig_cycle, use_container_width=True)
+
+        # 保存每一圈 PNG
         png_path = os.path.join(save_dir, f"Cycle_{idx}.png")
-        fig.savefig(png_path)
-
-        # 保存 BytesIO 用于 PDF
-        buf = BytesIO()
-        fig.savefig(buf, format="png")
-        cycle_png = buf.getvalue()
+        fig_cycle.write_image(png_path, width=1000, height=500, scale=2)
 
         # 峰值检测
         ox_idx = np.argmax(yc)
@@ -212,16 +220,13 @@ for uploaded_file in uploaded_files:
         st.write(f"**Oxidation Peak:** {ox}")
         st.write(f"**Reduction Peak:** {rd}")
 
-        # ---- 保存每一圈原始数据 CSV ----
+        # 保存每一圈原始数据 CSV
         df_cycle = pd.DataFrame({"Potential": xc, "Current": yc})
         csv_path = os.path.join(save_dir, f"Cycle_{idx}.csv")
         df_cycle.to_csv(csv_path, index=False)
 
         excel_output.append(df_cycle)
-        cycle_figs.append((cycle_png, {"ox": ox, "red": rd}))
-
-        # 保存用于叠加比较
-        all_cycles_for_compare.setdefault(uploaded_file.name, {})[idx] = (xc, yc)
+        cycle_figs.append((open(png_path, "rb").read(), {"ox": ox, "red": rd}))
 
     # =========================================================
     # ③ 下载 Excel
@@ -249,32 +254,3 @@ for uploaded_file in uploaded_files:
         pdf_bytes,
         file_name=f"{uploaded_file.name}_Report.pdf"
     )
-
-
-# =========================================================
-# ⑤ 多文件多曲线叠加
-# =========================================================
-
-st.divider()
-st.header("📊 多曲线叠加比较（可缩放）")
-
-file_names = list(all_cycles_for_compare.keys())
-
-select_files = st.multiselect("选择文件用于叠加：", file_names)
-
-if select_files:
-    cycle_num = st.number_input("选择叠加的圈数（通常 1 为第一圈）", 1, 10, 1)
-
-    fig_c = go.Figure()
-    for fname in select_files:
-        if cycle_num in all_cycles_for_compare[fname]:
-            xc, yc = all_cycles_for_compare[fname][cycle_num]
-            fig_c.add_trace(go.Scatter(x=xc, y=yc, mode='lines', name=f"{fname} - Cycle {cycle_num}"))
-
-    fig_c.update_layout(
-        xaxis_title="Potential (V)",
-        yaxis_title="Current (A)",
-        title="Multi-file Cycle Comparison (Interactive)",
-        height=600
-    )
-    st.plotly_chart(fig_c, use_container_width=True)
