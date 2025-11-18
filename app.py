@@ -3,19 +3,44 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import re
+from io import BytesIO
 
 
-st.set_page_config(page_title="自动 CV 分析平台", layout="centered")
-st.title("🔬 自动 CV 曲线多圈分析平台")
-st.write("上传 CSV 文件后，将自动解析仪器参数并分割所有扫描圈。")
+# =================== 页面设置 ===================
+st.set_page_config(page_title="自动 CV 分析平台 Pro", layout="wide")
+st.title("⚡ 自动 CV 多圈分析平台 · Pro 版本")
+st.caption("支持：自动解析参数 · 自动圈数识别 · 峰值检测 · 图像下载 · 多文件分析")
 
 
-# ============ 文件上传 ============
-uploaded_file = st.file_uploader("请上传 CSV 文件：", type=["csv"])
+# =================== 文件上传 ===================
+uploaded_files = st.file_uploader(
+    "请选择一个或多个 CSV 文件：", 
+    type=["csv"],
+    accept_multiple_files=True
+)
 
-if uploaded_file:
-    # 读取全部文本行
-    raw_lines = uploaded_file.getvalue().decode("utf-8").splitlines()
+if not uploaded_files:
+    st.stop()
+
+
+# ============ 公共函数：自动解码 UTF8 / GBK ============
+def safe_decode(file):
+    try:
+        return file.getvalue().decode("utf-8")
+    except:
+        return file.getvalue().decode("gbk", errors="ignore")
+
+
+# ============ 处理每一个文件 ============
+
+for uploaded_file in uploaded_files:
+
+    st.divider()
+    st.header(f"📌 文件：{uploaded_file.name}")
+
+    # 读取文本
+    file_text = safe_decode(uploaded_file)
+    raw_lines = file_text.splitlines()
 
     # ====== 自动提取 CSV 表头参数 ======
     param_dict = {}
@@ -28,24 +53,21 @@ if uploaded_file:
             value = m.group(2).strip()
             param_dict[key] = value
 
-    # 显示读取的参数
-    st.subheader("📌 自动识别的仪器参数")
-    st.json(param_dict)
+    with st.expander("📋 仪器参数（自动解析）", expanded=False):
+        st.json(param_dict)
 
-    # 解析关键参数（带容错处理）
-    try:
-        init_E = float(param_dict.get("Init E (mV)", 0))
-        high_E = float(param_dict.get("High E (mV)", 0))
-        low_E = float(param_dict.get("Low E (mV)", 0))
-        sample_int = float(param_dict.get("Sample Int (mV)", 5))
-        sweep_segments = int(param_dict.get("Sweep Segments", 2))
-    except:
-        st.error("❌ 参数格式解析失败，请检查文件！")
-        st.stop()
+    # 参数解析带容错
+    getF = lambda k, d=0: float(param_dict.get(k, d))
+    getI = lambda k, d=0: int(param_dict.get(k, d))
 
-    # 一圈包含两个 segment
+    init_E = getF("Init E (mV)")
+    high_E = getF("High E (mV)")
+    low_E = getF("Low E (mV)")
+    sample_int = getF("Sample Int (mV)")
+    sweep_segments = getI("Sweep Segments", 2)
+
     full_cycles = sweep_segments // 2
-    st.success(f"✔ 自动识别到 **{sweep_segments} 个扫描段** → **{full_cycles} 圈完整扫描**")
+    st.success(f"✔ 识别到：{sweep_segments} 个扫描段 → {full_cycles} 圈")
 
     # ====== 查找数据表头行 ======
     header_line = None
@@ -68,7 +90,7 @@ if uploaded_file:
     x = df[x_col].dropna().values
     y = df[y_col].dropna().values
 
-    # ====== 自动识别电压方向变化（切分 segment）======
+    # ====== 自动识别扫描段 ======
     dx = np.diff(x)
     direction = np.sign(dx)
     switch_points = np.where(np.diff(direction) != 0)[0] + 1
@@ -78,40 +100,62 @@ if uploaded_file:
     for p in switch_points:
         segments.append((start, p))
         start = p
-    segments.append((start, len(x)-1))
+    segments.append((start, len(x) - 1))
 
-    st.write(f"自动检测到 {len(segments)} 个电压段（Segment）")
-
-    # ====== 根据 Sweep Segments 精确匹配 ======
-    if len(segments) != sweep_segments:
-        st.warning("⚠ 自动识别的 Segment 数量与 Sweep Segments 不一致，但仍继续匹配。")
-
-    # ====== 合并两个 Segment → 一圈 ======
+    # ====== 合并两个 segment → 一圈 ======
     cycles = []
     for i in range(0, len(segments), 2):
         if i + 1 < len(segments):
-            s1, _ = segments[i]
-            _, e2 = segments[i + 1]
-            cycles.append((s1, e2))
+            s, _ = segments[i]
+            _, e = segments[i+1]
+            cycles.append((s, e))
 
-    st.success(f"✔ 最终识别到 {len(cycles)} 圈")
+    st.info(f"已识别到 {len(cycles)} 圈完整扫描")
 
-    # ====== 绘制整体图像 ======
+    # =================== 绘制全部曲线 ===================
     st.subheader("📈 全部扫描曲线")
-    fig_full, ax_full = plt.subplots()
-    ax_full.plot(x, y)
-    ax_full.set_xlabel("Potential (V)")
-    ax_full.set_ylabel("Current (A)")
-    ax_full.grid(True)
+    fig_full, ax1 = plt.subplots()
+    ax1.plot(x, y)
+    ax1.set_xlabel("Potential (V)")
+    ax1.set_ylabel("Current (A)")
+    ax1.grid(True)
     st.pyplot(fig_full)
 
-    # ====== 绘制每一圈 ======
-    st.subheader("🔄 每一圈图像")
-    for idx, (s, e) in enumerate(cycles, start=1):
-        st.markdown(f"### 第 {idx} 圈")
+    # 下载 PNG
+    buf_png = BytesIO()
+    fig_full.savefig(buf_png, format="png")
+    st.download_button("下载当前图 (PNG)", buf_png.getvalue(), file_name=f"{uploaded_file.name}_full.png")
+
+    # =================== 绘制每一圈 ===================
+    st.subheader("🔄 每一圈分析")
+
+    for idx, (s, e) in enumerate(cycles, 1):
+        st.markdown(f"### 🔸 第 {idx} 圈")
+
+        xc = x[s:e]
+        yc = y[s:e]
+
         fig, ax = plt.subplots()
-        ax.plot(x[s:e], y[s:e])
+        ax.plot(xc, yc)
         ax.set_xlabel("Potential (V)")
         ax.set_ylabel("Current (A)")
         ax.grid(True)
         st.pyplot(fig)
+
+        # ====== 峰值检测 ======
+        max_idx = np.argmax(yc)
+        min_idx = np.argmin(yc)
+
+        st.write(
+            f"**峰值电流（氧化峰）**： {yc[max_idx]:.4e} A @ {xc[max_idx]:.3f} V\n\n"
+            f"**谷值电流（还原峰）**： {yc[min_idx]:.4e} A @ {xc[min_idx]:.3f} V"
+        )
+
+        # 下载
+        buf_png = BytesIO()
+        fig.savefig(buf_png, format="png")
+        st.download_button(
+            f"下载第{idx}圈图 (PNG)", 
+            buf_png.getvalue(), 
+            file_name=f"{uploaded_file.name}_cycle_{idx}.png"
+        )
