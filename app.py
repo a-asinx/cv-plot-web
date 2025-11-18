@@ -6,6 +6,7 @@ from io import BytesIO
 import re
 from fpdf import FPDF
 import os
+import matplotlib.pyplot as plt  # 用于生成 PDF 图片
 
 st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
 st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
@@ -24,8 +25,8 @@ def safe_decode(file):
         return file.getvalue().decode("gbk", errors="ignore")
 
 
-def generate_pdf_report(filename, params, cycles_data, full_fig_png, cycle_figs_png):
-    """生成 PDF 分析报告"""
+def generate_pdf_report(filename, params, cycles_data, full_curve_xy, cycle_data_list):
+    """生成 PDF 分析报告，使用 matplotlib 临时生成图片避免 kaleido"""
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=10)
 
@@ -42,26 +43,40 @@ def generate_pdf_report(filename, params, cycles_data, full_fig_png, cycle_figs_
     # 全图
     pdf.set_font("Arial", size=12)
     pdf.cell(0, 10, "Full CV Curve:", ln=True)
-    full_path = "/tmp/full.png"
-    with open(full_path, "wb") as f:
-        f.write(full_fig_png)
-    pdf.image(full_path, w=170)
+    x_full, y_full = full_curve_xy
+    plt.figure(figsize=(8, 4))
+    plt.plot(x_full, y_full, color='royalblue', linewidth=2)
+    plt.xlabel("Potential (V)")
+    plt.ylabel("Current (A)")
+    plt.grid(True)
+    plt.tight_layout()
+    tmp_full = BytesIO()
+    plt.savefig(tmp_full, format="png")
+    plt.close()
+    tmp_full.seek(0)
+    pdf.image(tmp_full, w=170)
 
     # 每圈
-    for idx, (png, info) in enumerate(cycle_figs_png):
+    for idx, (df_cycle, peaks) in enumerate(cycle_data_list):
         pdf.add_page()
         pdf.cell(0, 10, f"Cycle {idx+1}:", ln=True)
-        path = f"/tmp/cycle_{idx}.png"
-        with open(path, "wb") as f:
-            f.write(png)
-        pdf.image(path, w=170)
+        # 用 matplotlib 保存每圈图
+        plt.figure(figsize=(8, 4))
+        plt.plot(df_cycle["Potential"], df_cycle["Current"], color='firebrick', linewidth=2)
+        plt.xlabel("Potential (V)")
+        plt.ylabel("Current (A)")
+        plt.grid(True)
+        plt.tight_layout()
+        tmp_cycle = BytesIO()
+        plt.savefig(tmp_cycle, format="png")
+        plt.close()
+        tmp_cycle.seek(0)
+        pdf.image(tmp_cycle, w=170)
         pdf.ln(5)
-
         pdf.set_font("Arial", size=11)
-        pdf.cell(0, 8, f"Oxidation Peak: {info['ox']}", ln=True)
-        pdf.cell(0, 8, f"Reduction Peak: {info['red']}", ln=True)
+        pdf.cell(0, 8, f"Oxidation Peak: {peaks['ox']}", ln=True)
+        pdf.cell(0, 8, f"Reduction Peak: {peaks['red']}", ln=True)
 
-    # 输出 PDF
     buf = BytesIO()
     buf.write(pdf.output(dest="S").encode("latin-1"))
     return buf.getvalue()
@@ -82,7 +97,7 @@ if not uploaded_files:
 
 
 # =========================================================
-# 主循环：处理每一个文件
+# 主循环
 # =========================================================
 
 for uploaded_file in uploaded_files:
@@ -107,7 +122,6 @@ for uploaded_file in uploaded_files:
     # 参数解析
     getF = lambda k, d=0: float(params.get(k, d))
     getI = lambda k, d=0: int(params.get(k, d))
-
     sweep_segments = getI("Sweep Segments", 2)
     full_cycles = sweep_segments // 2
 
@@ -120,7 +134,6 @@ for uploaded_file in uploaded_files:
 
     df = pd.read_csv(uploaded_file, skiprows=header_line)
     df.columns = df.columns.str.strip()
-
     x_col = [c for c in df.columns if "Potential" in c][0]
     y_col = [c for c in df.columns if "Current" in c][0]
     x = df[x_col].values
@@ -130,33 +143,21 @@ for uploaded_file in uploaded_files:
     dx = np.diff(x)
     direction = np.sign(dx)
     switch = np.where(np.diff(direction) != 0)[0] + 1
-
     segments = [(0, switch[0])] if len(switch) else []
     for a, b in zip(switch, np.append(switch[1:], len(x) - 1)):
         segments.append((a, b))
-
-    # 合并成周期
     cycles = []
     for i in range(0, len(segments), 2):
         if i + 1 < len(segments):
             cycles.append((segments[i][0], segments[i+1][1]))
-
     st.success(f"✔ 共识别到 {len(cycles)} 圈")
 
     # =========================================================
-    # ① 交互式 Plotly 全曲线（可缩放、美化）
+    # 交互式全曲线
     # =========================================================
     st.subheader("📈 交互式完整曲线（可缩放）")
-
     fig_plotly = go.Figure()
-    fig_plotly.add_trace(go.Scatter(
-        x=x,
-        y=y,
-        mode='lines',
-        name="Full Curve",
-        line=dict(color='royalblue', width=2)
-    ))
-
+    fig_plotly.add_trace(go.Scatter(x=x, y=y, mode='lines', line=dict(color='royalblue', width=2)))
     fig_plotly.update_layout(
         title=dict(text="Full CV Curve", font=dict(size=24)),
         xaxis=dict(title="Potential (V)", title_font=dict(size=18),
@@ -167,32 +168,26 @@ for uploaded_file in uploaded_files:
         margin=dict(l=80, r=40, t=80, b=60),
         legend=dict(font=dict(size=14)),
     )
-
     st.plotly_chart(fig_plotly, use_container_width=True)
 
-    # 保存用于 PDF
-    buf_full = BytesIO()
-    fig_plotly.write_image(buf_full, format="png", width=1200, height=600, scale=2)
-    buf_full_png = buf_full.getvalue()
+    # 保存数据用于 PDF
+    full_curve_xy = (x, y)
 
     # =========================================================
-    # ② 每一圈分析（Plotly 替代 Matplotlib）
+    # 每一圈分析
     # =========================================================
     st.subheader("🔄 每一圈分析")
-
     excel_output = []
-    cycle_figs = []  # 用于 PDF
+    cycle_data_list = []
 
-    # 创建文件夹保存每一圈数据与图像
     save_dir = f"{uploaded_file.name}_Cycles"
     os.makedirs(save_dir, exist_ok=True)
 
     for idx, (s, e) in enumerate(cycles, 1):
-
         st.markdown(f"### 🔸 第 {idx} 圈")
         xc, yc = x[s:e], y[s:e]
 
-        # Plotly 绘制每一圈
+        # Plotly 每圈
         fig_cycle = go.Figure()
         fig_cycle.add_trace(go.Scatter(x=xc, y=yc, mode='lines', line=dict(color='firebrick', width=2)))
         fig_cycle.update_layout(
@@ -204,53 +199,40 @@ for uploaded_file in uploaded_files:
             height=500,
             margin=dict(l=80, r=40, t=60, b=50),
         )
-
         st.plotly_chart(fig_cycle, use_container_width=True)
 
-        # 保存每一圈 PNG
+        # 保存 PNG
         png_path = os.path.join(save_dir, f"Cycle_{idx}.png")
         fig_cycle.write_image(png_path, width=1000, height=500, scale=2)
 
-        # 峰值检测
+        # 峰值
         ox_idx = np.argmax(yc)
         rd_idx = np.argmin(yc)
         ox = f"{yc[ox_idx]:.4e} A @ {xc[ox_idx]:.3f} V"
         rd = f"{yc[rd_idx]:.4e} A @ {xc[rd_idx]:.3f} V"
-
         st.write(f"**Oxidation Peak:** {ox}")
         st.write(f"**Reduction Peak:** {rd}")
 
-        # 保存每一圈原始数据 CSV
+        # 保存 CSV
         df_cycle = pd.DataFrame({"Potential": xc, "Current": yc})
         csv_path = os.path.join(save_dir, f"Cycle_{idx}.csv")
         df_cycle.to_csv(csv_path, index=False)
 
         excel_output.append(df_cycle)
-        cycle_figs.append((open(png_path, "rb").read(), {"ox": ox, "red": rd}))
+        cycle_data_list.append((df_cycle, {"ox": ox, "red": rd}))
 
     # =========================================================
-    # ③ 下载 Excel
+    # 下载 Excel
     # =========================================================
     st.subheader("📥 导出结果")
-
     excel_buf = BytesIO()
     with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
         for i, dfc in enumerate(excel_output, 1):
             dfc.to_excel(writer, sheet_name=f"Cycle_{i}", index=False)
-
-    st.download_button(
-        "⬇ 下载 Excel",
-        excel_buf.getvalue(),
-        file_name=f"{uploaded_file.name}_Cycles.xlsx"
-    )
+    st.download_button("⬇ 下载 Excel", excel_buf.getvalue(), file_name=f"{uploaded_file.name}_Cycles.xlsx")
 
     # =========================================================
-    # ④ 下载 PDF 报告
+    # 下载 PDF
     # =========================================================
-    pdf_bytes = generate_pdf_report(uploaded_file.name, params, excel_output, buf_full_png, cycle_figs)
-
-    st.download_button(
-        "⬇ 下载 PDF 报告",
-        pdf_bytes,
-        file_name=f"{uploaded_file.name}_Report.pdf"
-    )
+    pdf_bytes = generate_pdf_report(uploaded_file.name, params, excel_output, full_curve_xy, cycle_data_list)
+    st.download_button("⬇ 下载 PDF 报告", pdf_bytes, file_name=f"{uploaded_file.name}_Report.pdf")
