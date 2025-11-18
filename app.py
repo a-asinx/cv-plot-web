@@ -87,6 +87,7 @@ if not uploaded_files:
     st.stop()
 
 all_cycles = {}
+all_cycles_peaks = {}
 
 for uploaded_file in uploaded_files:
     st.divider()
@@ -158,6 +159,7 @@ for uploaded_file in uploaded_files:
     save_dir = f"{uploaded_file.name}_Cycles"
     os.makedirs(save_dir, exist_ok=True)
     all_cycles[uploaded_file.name] = {}
+    all_cycles_peaks[uploaded_file.name] = {}
 
     for idx, (s, e) in enumerate(cycles, 1):
         st.markdown(f"### 🔸 第 {idx} 圈")
@@ -186,7 +188,8 @@ for uploaded_file in uploaded_files:
 
         excel_output.append(df_cycle)
         cycles_data_list.append((df_cycle, {"ox": ox, "red": rd}))
-        all_cycles[uploaded_file.name][idx] = (xc, yc)
+        all_cycles[uploaded_file.name][idx] = df_cycle
+        all_cycles_peaks[uploaded_file.name][idx] = {"ox": ox, "red": rd}
 
     # 下载 Excel / PDF
     excel_buf = BytesIO()
@@ -224,10 +227,14 @@ if selected_files:
         cycle_selection[f] = st.number_input(f"{f} 选择圈数", 1, max_cycle, 1, key=f"{f}_cycle_input")
 
     fig_compare = go.Figure()
+    compare_data = {}
     for f in selected_files:
         sel_cycle = cycle_selection[f]
-        x_sel, y_sel = all_cycles[f][sel_cycle]
-        fig_compare.add_trace(go.Scatter(x=x_sel, y=y_sel, mode='lines', name=f"{f} Cycle {sel_cycle}"))
+        df_sel = all_cycles[f][sel_cycle]
+        peaks_sel = all_cycles_peaks[f][sel_cycle]
+        compare_data[f] = (df_sel, peaks_sel)
+        fig_compare.add_trace(go.Scatter(x=df_sel["Potential"], y=df_sel["Current"], mode='lines', name=f"{f} Cycle {sel_cycle}"))
+
     fig_compare.update_layout(
         title="Multi-file Multi-cycle Comparison",
         xaxis_title="Potential (V)",
@@ -236,3 +243,47 @@ if selected_files:
         legend=dict(font=dict(size=14)),
     )
     st.plotly_chart(fig_compare, use_container_width=True)
+
+    # -------------------- 导出对比数据 --------------------
+    if st.button("⬇ 导出对比数据 Excel/PNG"):
+        export_buf = BytesIO()
+        with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
+            # 每个文件的原始数据
+            for f, (df_sel, peaks_sel) in compare_data.items():
+                df_sel.to_excel(writer, sheet_name=f"{f}_Data", index=False)
+            # 峰值分析
+            peak_summary = []
+            for f, (df_sel, peaks_sel) in compare_data.items():
+                peak_summary.append({"File": f, "Oxidation Peak": peaks_sel["ox"], "Reduction Peak": peaks_sel["red"]})
+            df_peak = pd.DataFrame(peak_summary)
+            df_peak.to_excel(writer, sheet_name="Peak_Analysis", index=False)
+        st.download_button(
+            label="⬇ 下载对比数据 Excel",
+            data=export_buf.getvalue(),
+            file_name="MultiFile_MultiCycle_Comparison.xlsx",
+            key="compare_excel"
+        )
+
+        # 保存对比曲线图
+        compare_png_path = "MultiFile_MultiCycle_Comparison.png"
+        plt.figure(figsize=(8,4))
+        for f, (df_sel, peaks_sel) in compare_data.items():
+            plt.plot(df_sel["Potential"], df_sel["Current"], label=f"{f} Cycle {cycle_selection[f]}")
+        plt.xlabel("Potential (V)")
+        plt.ylabel("Current (A)")
+        plt.title("Multi-file Multi-cycle Comparison")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(compare_png_path)
+        plt.close()
+        with open(compare_png_path, "rb") as f:
+            png_bytes = f.read()
+        st.download_button(
+            label="⬇ 下载对比曲线 PNG",
+            data=png_bytes,
+            file_name="MultiFile_MultiCycle_Comparison.png",
+            key="compare_png"
+        )
+        if os.path.exists(compare_png_path):
+            os.remove(compare_png_path)
