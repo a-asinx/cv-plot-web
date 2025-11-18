@@ -8,9 +8,9 @@ from fpdf import FPDF
 import os
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
-st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
-st.caption("支持：自动解析参数 · 多圈切分 · 峰值分析 · Excel 导出 · PDF 报告 · 交互缩放")
+st.set_page_config(page_title="自动 CV 分析", layout="wide")
+st.title("⚡ 电化学工作站 CV 多圈分析")
+st.caption("2025.11.18")
 
 
 # =========================================================
@@ -228,3 +228,4 @@ for uploaded_file in uploaded_files:
     # =========================================================
     pdf_bytes = generate_pdf_report(uploaded_file.name, params, cycles_data_list, full_curve_xy)
     st.download_button("⬇ 下载 PDF 报告", pdf_bytes, file_name=f"{uploaded_file.name}_Report.pdf")
+
