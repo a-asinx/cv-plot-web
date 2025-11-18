@@ -184,7 +184,7 @@ for uploaded_file in uploaded_files:
         ox = f"{yc[ox_idx]:.4e} A @ {xc[ox_idx]:.3f} V"
         rd = f"{yc[rd_idx]:.4e} A @ {xc[rd_idx]:.3f} V"
         st.write(f"**氧化峰:** {ox}")
-        st.write(f"**Reduction Peak:** {rd}")
+        st.write(f"**还原峰:** {rd}")
 
         excel_output.append(df_cycle)
         cycles_data_list.append((df_cycle, {"ox": ox, "red": rd}))
@@ -287,4 +287,5 @@ if selected_files:
         )
         if os.path.exists(compare_png_path):
             os.remove(compare_png_path)
+
 
