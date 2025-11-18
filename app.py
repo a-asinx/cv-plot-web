@@ -8,9 +8,9 @@ from fpdf import FPDF
 import os
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
-st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
-st.caption("支持：自动解析参数 · 多圈切分 · 峰值分析 · Excel 导出 · PDF 报告 · 多文件对比")
+st.set_page_config(page_title="自动 CV 分析平台", layout="wide")
+st.title("⚡ 自动 CV 多圈分析")
+st.caption("2025.11.18")
 
 # =========================================================
 # 工具函数
@@ -104,7 +104,7 @@ for uploaded_file in uploaded_files:
         if m:
             params[m.group(1).strip()] = m.group(2).strip()
 
-    with st.expander("📋 仪器参数（自动识别）"):
+    with st.expander("📋 参数"):
         st.json(params)
 
     getF = lambda k, d=0: float(params.get(k, d))
@@ -139,7 +139,7 @@ for uploaded_file in uploaded_files:
     st.success(f"✔ 共识别到 {len(cycles)} 圈")
 
     # Plotly 全曲线
-    st.subheader("📈 交互式完整曲线（可缩放）")
+    st.subheader("📈 曲线可视化")
     fig_plotly = go.Figure()
     fig_plotly.add_trace(go.Scatter(x=x, y=y, mode='lines', line=dict(color='royalblue', width=2)))
     fig_plotly.update_layout(
@@ -215,7 +215,7 @@ for uploaded_file in uploaded_files:
 # 多文件多圈自定义对比
 # =========================================================
 st.divider()
-st.header("📊 多文件多圈自定义对比（可缩放）")
+st.header("📊 多文件多圈对比")
 
 file_names = list(all_cycles.keys())
 selected_files = st.multiselect("选择文件用于叠加：", file_names)
@@ -287,3 +287,4 @@ if selected_files:
         )
         if os.path.exists(compare_png_path):
             os.remove(compare_png_path)
+
