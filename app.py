@@ -1,20 +1,79 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
-import re
 from io import BytesIO
+import re
+from fpdf import FPDF
 
 
-# =================== 页面设置 ===================
-st.set_page_config(page_title="自动 CV 分析平台 Pro", layout="wide")
-st.title("⚡ 自动 CV 多圈分析平台 · Pro 版本")
-st.caption("支持：自动解析参数 · 自动圈数识别 · 峰值检测 · 图像下载 · 多文件分析")
+st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
+st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
+st.caption("支持：自动解析参数 · 多圈切分 · 峰值分析 · Excel 导出 · PDF 报告 · 多曲线对比 · 交互缩放")
 
 
-# =================== 文件上传 ===================
+# =========================================================
+# 工具函数
+# =========================================================
+
+def safe_decode(file):
+    """自动 UTF-8 / GBK 识别"""
+    try:
+        return file.getvalue().decode("utf-8")
+    except:
+        return file.getvalue().decode("gbk", errors="ignore")
+
+
+def generate_pdf_report(filename, params, cycles_data, full_fig_png, cycle_figs_png):
+    """生成 PDF 分析报告"""
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=10)
+
+    pdf.add_page()
+    pdf.set_font("Arial", size=16)
+    pdf.cell(0, 10, "Cyclic Voltammetry Report", ln=True)
+
+    # 参数
+    pdf.set_font("Arial", size=12)
+    pdf.cell(0, 10, "Instrument Parameters:", ln=True)
+    for k, v in params.items():
+        pdf.cell(0, 8, f"{k}: {v}", ln=True)
+
+    # 全图
+    pdf.set_font("Arial", size=12)
+    pdf.cell(0, 10, "Full CV Curve:", ln=True)
+    full_path = "/tmp/full.png"
+    with open(full_path, "wb") as f:
+        f.write(full_fig_png)
+    pdf.image(full_path, w=170)
+
+    # 每圈
+    for idx, (png, info) in enumerate(cycle_figs_png):
+        pdf.add_page()
+        pdf.cell(0, 10, f"Cycle {idx+1}:", ln=True)
+        path = f"/tmp/cycle_{idx}.png"
+        with open(path, "wb") as f:
+            f.write(png)
+        pdf.image(path, w=170)
+        pdf.ln(5)
+
+        pdf.set_font("Arial", size=11)
+        pdf.cell(0, 8, f"Oxidation Peak: {info['ox']}", ln=True)
+        pdf.cell(0, 8, f"Reduction Peak: {info['red']}", ln=True)
+
+    # 输出 PDF
+    buf = BytesIO()
+    buf.write(pdf.output(dest="S").encode("latin-1"))
+    return buf.getvalue()
+
+
+# =========================================================
+# 文件上传
+# =========================================================
+
 uploaded_files = st.file_uploader(
-    "请选择一个或多个 CSV 文件：", 
+    "请选择一个或多个 CSV 文件：",
     type=["csv"],
     accept_multiple_files=True
 )
@@ -23,139 +82,190 @@ if not uploaded_files:
     st.stop()
 
 
-# ============ 公共函数：自动解码 UTF8 / GBK ============
-def safe_decode(file):
-    try:
-        return file.getvalue().decode("utf-8")
-    except:
-        return file.getvalue().decode("gbk", errors="ignore")
+# =========================================================
+# 主循环：处理每一个文件
+# =========================================================
 
-
-# ============ 处理每一个文件 ============
+all_cycles_for_compare = {}   # 保存用于多曲线叠加
 
 for uploaded_file in uploaded_files:
 
     st.divider()
     st.header(f"📌 文件：{uploaded_file.name}")
 
-    # 读取文本
     file_text = safe_decode(uploaded_file)
     raw_lines = file_text.splitlines()
 
-    # ====== 自动提取 CSV 表头参数 ======
-    param_dict = {}
-    param_pattern = re.compile(r"(.+?)\s*[:\t]\s*(.+)")
-
+    # ------------------- 解析参数 -------------------
+    params = {}
+    pat = re.compile(r"(.+?)\s*[:\t]\s*(.+)")
     for line in raw_lines:
-        m = param_pattern.match(line)
+        m = pat.match(line)
         if m:
-            key = m.group(1).strip()
-            value = m.group(2).strip()
-            param_dict[key] = value
+            params[m.group(1).strip()] = m.group(2).strip()
 
-    with st.expander("📋 仪器参数（自动解析）", expanded=False):
-        st.json(param_dict)
+    with st.expander("📋 仪器参数（自动识别）"):
+        st.json(params)
 
-    # 参数解析带容错
-    getF = lambda k, d=0: float(param_dict.get(k, d))
-    getI = lambda k, d=0: int(param_dict.get(k, d))
+    # 参数解析
+    getF = lambda k, d=0: float(params.get(k, d))
+    getI = lambda k, d=0: int(params.get(k, d))
 
-    init_E = getF("Init E (mV)")
-    high_E = getF("High E (mV)")
-    low_E = getF("Low E (mV)")
-    sample_int = getF("Sample Int (mV)")
     sweep_segments = getI("Sweep Segments", 2)
-
     full_cycles = sweep_segments // 2
-    st.success(f"✔ 识别到：{sweep_segments} 个扫描段 → {full_cycles} 圈")
 
-    # ====== 查找数据表头行 ======
+    # ------------------- 找数据表头 -------------------
     header_line = None
     for i, line in enumerate(raw_lines):
         if "Potential" in line and "Current" in line:
             header_line = i
             break
 
-    if header_line is None:
-        st.error("❌ 未找到 Potential / Current 表头！")
-        st.stop()
-
-    # ====== 读取数据 ======
     df = pd.read_csv(uploaded_file, skiprows=header_line)
     df.columns = df.columns.str.strip()
 
     x_col = [c for c in df.columns if "Potential" in c][0]
     y_col = [c for c in df.columns if "Current" in c][0]
+    x = df[x_col].values
+    y = df[y_col].values
 
-    x = df[x_col].dropna().values
-    y = df[y_col].dropna().values
-
-    # ====== 自动识别扫描段 ======
+    # ------------------- 切分 segment -------------------
     dx = np.diff(x)
     direction = np.sign(dx)
-    switch_points = np.where(np.diff(direction) != 0)[0] + 1
+    switch = np.where(np.diff(direction) != 0)[0] + 1
 
-    segments = []
-    start = 0
-    for p in switch_points:
-        segments.append((start, p))
-        start = p
-    segments.append((start, len(x) - 1))
+    segments = [(0, switch[0])] if len(switch) else []
+    for a, b in zip(switch, np.append(switch[1:], len(x) - 1)):
+        segments.append((a, b))
 
-    # ====== 合并两个 segment → 一圈 ======
+    # 合并成周期
     cycles = []
     for i in range(0, len(segments), 2):
         if i + 1 < len(segments):
-            s, _ = segments[i]
-            _, e = segments[i+1]
-            cycles.append((s, e))
+            cycles.append((segments[i][0], segments[i+1][1]))
 
-    st.info(f"已识别到 {len(cycles)} 圈完整扫描")
+    st.success(f"✔ 共识别到 {len(cycles)} 圈")
 
-    # =================== 绘制全部曲线 ===================
-    st.subheader("📈 全部扫描曲线")
-    fig_full, ax1 = plt.subplots()
-    ax1.plot(x, y)
-    ax1.set_xlabel("Potential (V)")
-    ax1.set_ylabel("Current (A)")
-    ax1.grid(True)
-    st.pyplot(fig_full)
+    # =========================================================
+    # ① 交互式 Plotly 全曲线（可缩放）
+    # =========================================================
+    st.subheader("📈 交互式完整曲线（可缩放）")
 
-    # 下载 PNG
-    buf_png = BytesIO()
-    fig_full.savefig(buf_png, format="png")
-    st.download_button("下载当前图 (PNG)", buf_png.getvalue(), file_name=f"{uploaded_file.name}_full.png")
+    fig_plotly = go.Figure()
+    fig_plotly.add_trace(go.Scatter(x=x, y=y, mode='lines', name="Full Curve"))
+    fig_plotly.update_layout(
+        xaxis_title="Potential (V)",
+        yaxis_title="Current (A)",
+        title="Full CV Curve",
+        height=500
+    )
+    st.plotly_chart(fig_plotly, use_container_width=True)
 
-    # =================== 绘制每一圈 ===================
+    # 保存用于 PDF
+    buf_full = BytesIO()
+    plt.figure()
+    plt.plot(x, y)
+    plt.savefig(buf_full, format="png")
+    buf_full_png = buf_full.getvalue()
+
+    # =========================================================
+    # ② 每一圈分析
+    # =========================================================
     st.subheader("🔄 每一圈分析")
 
+    excel_output = []
+    cycle_figs = []  # 用于 PDF
+
     for idx, (s, e) in enumerate(cycles, 1):
+
         st.markdown(f"### 🔸 第 {idx} 圈")
+        xc, yc = x[s:e], y[s:e]
 
-        xc = x[s:e]
-        yc = y[s:e]
-
+        # ---- matplotlib 图 ----
         fig, ax = plt.subplots()
         ax.plot(xc, yc)
+        ax.grid(True)
         ax.set_xlabel("Potential (V)")
         ax.set_ylabel("Current (A)")
-        ax.grid(True)
         st.pyplot(fig)
 
-        # ====== 峰值检测 ======
-        max_idx = np.argmax(yc)
-        min_idx = np.argmin(yc)
+        # 保存 PNG
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        cycle_png = buf.getvalue()
 
-        st.write(
-            f"**峰值电流（氧化峰）**： {yc[max_idx]:.4e} A @ {xc[max_idx]:.3f} V\n\n"
-            f"**谷值电流（还原峰）**： {yc[min_idx]:.4e} A @ {xc[min_idx]:.3f} V"
-        )
+        # 峰值检测
+        ox_idx = np.argmax(yc)
+        rd_idx = np.argmin(yc)
+        ox = f"{yc[ox_idx]:.4e} A @ {xc[ox_idx]:.3f} V"
+        rd = f"{yc[rd_idx]:.4e} A @ {xc[rd_idx]:.3f} V"
 
-        # 下载
-        buf_png = BytesIO()
-        fig.savefig(buf_png, format="png")
-        st.download_button(
-            f"下载第{idx}圈图 (PNG)", 
-            buf_png.getvalue(), 
-            file_name=f"{uploaded_file.name}_cycle_{idx}.png"
-        )
+        st.write(f"**Oxidation Peak:** {ox}")
+        st.write(f"**Reduction Peak:** {rd}")
+
+        excel_output.append(pd.DataFrame({
+            "Cycle": idx,
+            "Potential": xc,
+            "Current": yc
+        }))
+
+        cycle_figs.append((cycle_png, {"ox": ox, "red": rd}))
+
+        # 保存用于叠加比较
+        all_cycles_for_compare.setdefault(uploaded_file.name, {})[idx] = (xc, yc)
+
+    # =========================================================
+    # ③ 下载 Excel
+    # =========================================================
+    st.subheader("📥 导出结果")
+
+    excel_buf = BytesIO()
+    with pd.ExcelWriter(excel_buf, engine="openpyxl") as writer:
+        for i, dfc in enumerate(excel_output, 1):
+            dfc.to_excel(writer, sheet_name=f"Cycle_{i}", index=False)
+
+    st.download_button(
+        "⬇ 下载 Excel",
+        excel_buf.getvalue(),
+        file_name=f"{uploaded_file.name}_Cycles.xlsx"
+    )
+
+    # =========================================================
+    # ④ 下载 PDF 报告
+    # =========================================================
+    pdf_bytes = generate_pdf_report(uploaded_file.name, params, excel_output, buf_full_png, cycle_figs)
+
+    st.download_button(
+        "⬇ 下载 PDF 报告",
+        pdf_bytes,
+        file_name=f"{uploaded_file.name}_Report.pdf"
+    )
+
+
+# =========================================================
+# ⑤ 多文件多曲线叠加
+# =========================================================
+
+st.divider()
+st.header("📊 多曲线叠加比较（可缩放）")
+
+file_names = list(all_cycles_for_compare.keys())
+
+select_files = st.multiselect("选择文件用于叠加：", file_names)
+
+if select_files:
+    cycle_num = st.number_input("选择叠加的圈数（通常 1 为第一圈）", 1, 10, 1)
+
+    fig_c = go.Figure()
+    for fname in select_files:
+        if cycle_num in all_cycles_for_compare[fname]:
+            xc, yc = all_cycles_for_compare[fname][cycle_num]
+            fig_c.add_trace(go.Scatter(x=xc, y=yc, mode='lines', name=f"{fname} - Cycle {cycle_num}"))
+
+    fig_c.update_layout(
+        xaxis_title="Potential (V)",
+        yaxis_title="Current (A)",
+        title="Multi-file Cycle Comparison (Interactive)",
+        height=600
+    )
+    st.plotly_chart(fig_c, use_container_width=True)
