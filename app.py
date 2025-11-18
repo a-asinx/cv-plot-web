@@ -183,7 +183,7 @@ for uploaded_file in uploaded_files:
         rd_idx = np.argmin(yc)
         ox = f"{yc[ox_idx]:.4e} A @ {xc[ox_idx]:.3f} V"
         rd = f"{yc[rd_idx]:.4e} A @ {xc[rd_idx]:.3f} V"
-        st.write(f"**Oxidation Peak:** {ox}")
+        st.write(f"**氧化峰:** {ox}")
         st.write(f"**Reduction Peak:** {rd}")
 
         excel_output.append(df_cycle)
@@ -287,3 +287,4 @@ if selected_files:
         )
         if os.path.exists(compare_png_path):
             os.remove(compare_png_path)
+
