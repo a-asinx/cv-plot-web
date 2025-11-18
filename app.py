@@ -61,8 +61,8 @@ def generate_pdf_report(filename, params, cycles_data, full_curve_xy):
             pdf.image(cycle_png_path, w=170)
         pdf.ln(5)
         pdf.set_font("Arial", size=11)
-        pdf.cell(0, 8, f"氧化峰: {peaks['ox']}", ln=True)
-        pdf.cell(0, 8, f"还原峰: {peaks['red']}", ln=True)
+        pdf.cell(0, 8, f"Oxidation Peak: {peaks['ox']}", ln=True)
+        pdf.cell(0, 8, f"Reduction Peak: {peaks['red']}", ln=True)
 
     buf = BytesIO()
     buf.write(pdf.output(dest="S").encode("latin-1"))
@@ -287,5 +287,3 @@ if selected_files:
         )
         if os.path.exists(compare_png_path):
             os.remove(compare_png_path)
-
-
