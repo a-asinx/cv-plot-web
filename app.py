@@ -8,15 +8,9 @@ from fpdf import FPDF
 import os
 import matplotlib.pyplot as plt
 
-# =========================================================
-# Matplotlib 中文支持
-# =========================================================
-plt.rcParams['font.sans-serif'] = ['SimHei']  # 中文字体
-plt.rcParams['axes.unicode_minus'] = False    # 负号正常显示
-
-st.set_page_config(page_title="自动 CV 分析平台 Pro+", layout="wide")
-st.title("⚡ 自动 CV 多圈分析平台 · Pro+ 版本")
-st.caption("支持：自动解析参数 · 多圈切分 · 峰值分析 · Excel 导出 · PDF 报告 · 多文件对比")
+st.set_page_config(page_title="自动 CV 分析平台", layout="wide")
+st.title("⚡ 自动 CV 多圈分析")
+st.caption("2025.11.18")
 
 # =========================================================
 # 工具函数
@@ -28,11 +22,11 @@ def safe_decode(file):
     except:
         return file.getvalue().decode("gbk", errors="ignore")
 
-def save_curve_png(x, y, path, title="曲线"):
+def save_curve_png(x, y, path, title="Curve"):
     plt.figure(figsize=(8,4))
     plt.plot(x, y, color='royalblue', linewidth=2)
-    plt.xlabel("电位 (V)")
-    plt.ylabel("电流 (A)")
+    plt.xlabel("Potential (V)")
+    plt.ylabel("Current (A)")
     plt.title(title)
     plt.grid(True)
     plt.tight_layout()
@@ -54,25 +48,26 @@ def generate_pdf_report(filename, params, cycles_data, full_curve_xy):
     pdf.set_font("Arial", size=12)
     pdf.cell(0, 10, "Full CV Curve:", ln=True)
     full_png_path = f"{filename}_tmp_full.png"
-    save_curve_png(full_curve_xy[0], full_curve_xy[1], full_png_path, title="完整 CV 曲线")
+    save_curve_png(full_curve_xy[0], full_curve_xy[1], full_png_path, title="Full CV Curve")
     if os.path.exists(full_png_path):
         pdf.image(full_png_path, w=170)
 
     for idx, (df_cycle, peaks) in enumerate(cycles_data):
         pdf.add_page()
-        pdf.cell(0, 10, f"第 {idx+1} 圈:", ln=True)
+        pdf.cell(0, 10, f"Cycle {idx+1}:", ln=True)
         cycle_png_path = f"{filename}_tmp_cycle_{idx+1}.png"
-        save_curve_png(df_cycle["Potential"], df_cycle["Current"], cycle_png_path, title=f"第 {idx+1} 圈曲线")
+        save_curve_png(df_cycle["Potential"], df_cycle["Current"], cycle_png_path, title=f"Cycle {idx+1}")
         if os.path.exists(cycle_png_path):
             pdf.image(cycle_png_path, w=170)
         pdf.ln(5)
         pdf.set_font("Arial", size=11)
-        pdf.cell(0, 8, f"氧化峰: {peaks['ox']}", ln=True)
-        pdf.cell(0, 8, f"还原峰: {peaks['red']}", ln=True)
+        pdf.cell(0, 8, f"Oxidation Peak: {peaks['ox']}", ln=True)
+        pdf.cell(0, 8, f"Reduction Peak: {peaks['red']}", ln=True)
 
     buf = BytesIO()
     buf.write(pdf.output(dest="S").encode("latin-1"))
     
+    # 删除临时文件
     for path in [full_png_path] + [f"{filename}_tmp_cycle_{i+1}.png" for i in range(len(cycles_data))]:
         if os.path.exists(path):
             os.remove(path)
@@ -109,7 +104,7 @@ for uploaded_file in uploaded_files:
         if m:
             params[m.group(1).strip()] = m.group(2).strip()
 
-    with st.expander("📋 仪器参数（自动识别）"):
+    with st.expander("📋 参数"):
         st.json(params)
 
     getF = lambda k, d=0: float(params.get(k, d))
@@ -144,13 +139,13 @@ for uploaded_file in uploaded_files:
     st.success(f"✔ 共识别到 {len(cycles)} 圈")
 
     # Plotly 全曲线
-    st.subheader("📈 交互式完整曲线（可缩放）")
+    st.subheader("📈 曲线可视化")
     fig_plotly = go.Figure()
     fig_plotly.add_trace(go.Scatter(x=x, y=y, mode='lines', line=dict(color='royalblue', width=2)))
     fig_plotly.update_layout(
-        title=dict(text="完整 CV 曲线", font=dict(size=24)),
-        xaxis=dict(title="电位 (V)", title_font=dict(size=18), tickfont=dict(size=14), showgrid=True, gridcolor='lightgrey'),
-        yaxis=dict(title="电流 (A)", title_font=dict(size=18), tickfont=dict(size=14), showgrid=True, gridcolor='lightgrey'),
+        title=dict(text="Full CV Curve", font=dict(size=24)),
+        xaxis=dict(title="Potential (V)", title_font=dict(size=18), tickfont=dict(size=14), showgrid=True, gridcolor='lightgrey'),
+        yaxis=dict(title="Current (A)", title_font=dict(size=18), tickfont=dict(size=14), showgrid=True, gridcolor='lightgrey'),
         height=600,
         margin=dict(l=80, r=40, t=80, b=60),
         legend=dict(font=dict(size=14)),
@@ -173,9 +168,9 @@ for uploaded_file in uploaded_files:
         fig_cycle = go.Figure()
         fig_cycle.add_trace(go.Scatter(x=xc, y=yc, mode='lines', line=dict(color='firebrick', width=2)))
         fig_cycle.update_layout(
-            title=dict(text=f"第 {idx} 圈", font=dict(size=20)),
-            xaxis=dict(title="电位 (V)", title_font=dict(size=16), tickfont=dict(size=12), showgrid=True, gridcolor='lightgrey'),
-            yaxis=dict(title="电流 (A)", title_font=dict(size=16), tickfont=dict(size=12), showgrid=True, gridcolor='lightgrey'),
+            title=dict(text=f"Cycle {idx}", font=dict(size=20)),
+            xaxis=dict(title="Potential (V)", title_font=dict(size=16), tickfont=dict(size=12), showgrid=True, gridcolor='lightgrey'),
+            yaxis=dict(title="Current (A)", title_font=dict(size=16), tickfont=dict(size=12), showgrid=True, gridcolor='lightgrey'),
             height=500,
             margin=dict(l=80, r=40, t=60, b=50),
         )
@@ -220,7 +215,7 @@ for uploaded_file in uploaded_files:
 # 多文件多圈自定义对比
 # =========================================================
 st.divider()
-st.header("📊 多文件多圈自定义对比（可缩放）")
+st.header("📊 多文件多圈对比")
 
 file_names = list(all_cycles.keys())
 selected_files = st.multiselect("选择文件用于叠加：", file_names)
@@ -242,38 +237,41 @@ if selected_files:
 
     fig_compare.update_layout(
         title="Multi-file Multi-cycle Comparison",
-        xaxis_title="电位 (V)",
-        yaxis_title="电流 (A)",
+        xaxis_title="Potential (V)",
+        yaxis_title="Current (A)",
         height=600,
         legend=dict(font=dict(size=14)),
     )
     st.plotly_chart(fig_compare, use_container_width=True)
 
+    # -------------------- 导出对比数据 --------------------
     if st.button("⬇ 导出对比数据 Excel/PNG"):
         export_buf = BytesIO()
         with pd.ExcelWriter(export_buf, engine="openpyxl") as writer:
+            # 每个文件的原始数据
             for f, (df_sel, peaks_sel) in compare_data.items():
-                df_sel.to_excel(writer, sheet_name=f"{f}_数据", index=False)
+                df_sel.to_excel(writer, sheet_name=f"{f}_Data", index=False)
+            # 峰值分析
             peak_summary = []
             for f, (df_sel, peaks_sel) in compare_data.items():
-                peak_summary.append({"文件": f, "氧化峰": peaks_sel["ox"], "还原峰": peaks_sel["red"]})
+                peak_summary.append({"File": f, "Oxidation Peak": peaks_sel["ox"], "Reduction Peak": peaks_sel["red"]})
             df_peak = pd.DataFrame(peak_summary)
-            df_peak.to_excel(writer, sheet_name="峰值分析", index=False)
+            df_peak.to_excel(writer, sheet_name="Peak_Analysis", index=False)
         st.download_button(
             label="⬇ 下载对比数据 Excel",
             data=export_buf.getvalue(),
-            file_name="多文件多圈对比数据.xlsx",
+            file_name="MultiFile_MultiCycle_Comparison.xlsx",
             key="compare_excel"
         )
 
-        # 对比曲线 PNG
-        compare_png_path = "多文件多圈对比曲线.png"
+        # 保存对比曲线图
+        compare_png_path = "MultiFile_MultiCycle_Comparison.png"
         plt.figure(figsize=(8,4))
         for f, (df_sel, peaks_sel) in compare_data.items():
             plt.plot(df_sel["Potential"], df_sel["Current"], label=f"{f} Cycle {cycle_selection[f]}")
-        plt.xlabel("电位 (V)")
-        plt.ylabel("电流 (A)")
-        plt.title("多文件多圈对比曲线")
+        plt.xlabel("Potential (V)")
+        plt.ylabel("Current (A)")
+        plt.title("Multi-file Multi-cycle Comparison")
         plt.grid(True)
         plt.legend()
         plt.tight_layout()
@@ -284,8 +282,9 @@ if selected_files:
         st.download_button(
             label="⬇ 下载对比曲线 PNG",
             data=png_bytes,
-            file_name="多文件多圈对比曲线.png",
+            file_name="MultiFile_MultiCycle_Comparison.png",
             key="compare_png"
         )
         if os.path.exists(compare_png_path):
             os.remove(compare_png_path)
+
