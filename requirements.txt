@@ -5,3 +5,5 @@ matplotlib
 plotly
 fpdf
 openpyxl
+plotly
+kaleido
